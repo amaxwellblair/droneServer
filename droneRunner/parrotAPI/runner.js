@@ -21,6 +21,13 @@ rollingSpider.connect(function () {
       {
         delay: 5000,
         task: function () {
+          rollingSpider.frontFlip();
+          rollingSpider.flatTrim();
+        }
+      },
+      {
+        delay: 5000,
+        task: function () {
           console.log("Landing commenced")
           rollingSpider.land();
         }

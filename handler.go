@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -72,6 +73,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // postConnectHandler creates a connection between droneServer and droneClient
 func (h *Handler) postConnectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		http.Error(w, "no body was sent", http.StatusInternalServerError)
+		return
+	}
+
 	// Decode request and create new drone
 	var dr DroneRequest
 	if err := json.NewDecoder(r.Body).Decode(&dr); err != nil {
@@ -107,30 +113,19 @@ func (h *Handler) postConnectHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getActionsHandler(w http.ResponseWriter, r *http.Request) {
 	// Decode request
 	id, err := strconv.Atoi(r.URL.Query().Get("id"))
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Read and remove the drone from the queue
-	h.mu.Lock()
-	var d *Drone
-	if len(h.Queue) == 1 {
-		if drone := h.Queue[0]; drone.DroneID == id {
-			d = drone
-			h.Queue = h.Queue[:0]
-		}
-	} else {
-		for index, drone := range h.Queue {
-			if drone.DroneID == id {
-				d = drone
-				h.Queue = append(h.Queue[0:(index)], h.Queue[(index+1):]...)
-			}
-		}
-	}
-	h.mu.Unlock()
+	d, err := h.PopDrone(id)
 	if d == nil {
 		http.Error(w, "no drone found with this ID", http.StatusInternalServerError)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -142,6 +137,10 @@ func (h *Handler) getActionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postActionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		http.Error(w, "no body was sent", http.StatusInternalServerError)
+		return
+	}
 
 	// Decode the request
 	var ar ActionsRequest
@@ -181,6 +180,30 @@ func (h *Handler) postActionsHandler(w http.ResponseWriter, r *http.Request) {
 	d.Wait <- new(struct{})
 }
 
+// PopDrone finds a specific drone in the Handler queue and deletes it from the Queue
+func (h *Handler) PopDrone(id int) (*Drone, error) {
+	h.mu.Lock()
+	var d *Drone
+	if len(h.Queue) == 1 {
+		if drone := h.Queue[0]; drone.DroneID == id {
+			d = drone
+			h.Queue = h.Queue[:0]
+		}
+	} else {
+		for index, drone := range h.Queue {
+			if drone.DroneID == id {
+				d = drone
+				h.Queue = append(h.Queue[0:(index)], h.Queue[(index+1):]...)
+			}
+		}
+	}
+	h.mu.Unlock()
+	if d == nil {
+		return nil, errors.New("no drone for this ID")
+	}
+	return d, nil
+}
+
 // DroneRequest contains drone specific information of the client
 type DroneRequest struct {
 	DroneID string `json:"droneID"`
@@ -189,11 +212,11 @@ type DroneRequest struct {
 // ActionsResponse contains the actions for the drone client
 type ActionsResponse struct {
 	ItemID  int
-	Actions []*string
+	Actions []string
 }
 
 // ActionsRequest contains the actions from the pilot
 type ActionsRequest struct {
-	ItemID  string    `json:"itemID"`
-	Actions []*string `json:"actions"`
+	ItemID  string   `json:"itemID"`
+	Actions []string `json:"actions"`
 }
